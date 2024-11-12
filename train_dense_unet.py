@@ -2,11 +2,11 @@ import sys
 
 import click
 import numpy as np
+import wandb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib2 import Path
-from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm
 
@@ -87,8 +87,21 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
         optimizer, mode='min', factor=0.1, patience=5, verbose=True,
         threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08
     )
-    
-    logger = SummaryWriter(str(log_path))
+
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="blind_train_dense_unet",
+
+        # track hyperparameters and run metadata
+        config={
+            "batch_size": batch_size,
+            "learning_rate": optimizer.param_groups[0]["lr"],
+            "architecture": net.__class__.__name__,
+            "dataset": "kits19",
+            "epochs": epoch_num,
+            "image_size": "512x512",
+        }
+    )
     
     gpu_ids = [i for i in range(num_gpu)]
     
@@ -126,18 +139,20 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
         transform.train()
         try:
             loss = training(net, dataset, criterion, optimizer, scheduler,
-                            epoch, batch_size, num_workers, vis_intvl, logger)
+                            epoch, batch_size, num_workers, vis_intvl)
             
             if eval_intvl > 0 and (epoch + 1) % eval_intvl == 0:
                 net.eval()
                 torch.set_grad_enabled(False)
                 transform.eval()
                 
-                train_score = evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, logger, type='train')
-                valid_score = evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, logger, type='valid')
+                train_score = evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, wandb, type='train')
+                valid_score = evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, wandb, type='valid')
                 
                 print(f'Train data score: {train_score:.5f}')
+                wandb.log({"Train data score:": '{train_score:.5f}'})
                 print(f'Valid data score: {valid_score:.5f}')
+                wandb.log({"Valid data score:": '{valid_score:.5f}'})
             
             if valid_score > best_score:
                 best_score = valid_score
@@ -145,8 +160,7 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
                 cp_file = cp_path / 'best.pth'
                 cp.save(epoch, net.module, optimizer, str(cp_file))
                 print('Update best acc!')
-                logger.add_scalar('best/epoch', best_epoch + 1, 0)
-                logger.add_scalar('best/score', best_score, 0)
+                wandb.log({"valid best score": best_score, "epoch": epoch + 1})
             
             if (epoch + 1) % cp_intvl == 0:
                 cp_file = cp_path / f'cp_{epoch + 1:03d}.pth'
@@ -159,9 +173,10 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
             cp_file = cp_path / 'INTERRUPTED.pth'
             cp.save(epoch, net.module, optimizer, str(cp_file))
             return
+    wandb.finish()
 
 
-def training(net, dataset, criterion, optimizer, scheduler, epoch, batch_size, num_workers, vis_intvl, logger):
+def training(net, dataset, criterion, optimizer, scheduler, epoch, batch_size, num_workers, vis_intvl, wandb):
     sampler = RandomSampler(dataset.train_dataset)
     
     train_loader = DataLoader(dataset.train_dataset, batch_size=batch_size, sampler=sampler,
@@ -204,12 +219,13 @@ def training(net, dataset, criterion, optimizer, scheduler, epoch, batch_size, n
     scheduler.step(loss.item())
     
     for k, v in losses.items():
-        logger.add_scalar(f'loss/{k}', v, epoch)
+        wandb.log({f'traning in loss/{k}':v, "epoch": epoch})
+
     
     return loss.item()
 
 
-def evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, logger, type):
+def evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, wandb, type):
     type = type.lower()
     if type == 'train':
         subset = dataset.train_dataset
@@ -266,17 +282,18 @@ def evaluation(net, dataset, epoch, batch_size, num_workers, vis_intvl, logger, 
     for k in sorted(list(acc.keys())):
         if k == 'dc_each_case': continue
         print(f'{type}/{k}: {acc[k]:.5f}')
-        logger.add_scalar(f'{type}_acc_total/{k}', acc[k], epoch)
+        wandb.log({f'{type}_acc_total/{k}': acc[k], "epoch": epoch})
+
     
     for case_idx in range(len(acc['dc_each_case'])):
         case_id = dataset.case_idx_to_case_id(case_idx, type)
         dc_each_case = acc['dc_each_case'][case_idx]
         for cls in range(len(dc_each_case)):
             dc = dc_each_case[cls]
-            logger.add_scalar(f'{type}_acc_each_case/case_{case_id:05d}/dc_{cls}', dc, epoch)
+            wandb.log({f'{type}_acc_each_case/case_{case_id:05d}/dc_{cls}': dc, "epoch": epoch})
     
     score = (acc['dc_per_case_1'] + acc['dc_per_case_2']) / 2
-    logger.add_scalar(f'{type}/score', score, epoch)
+    wandb.log({f'evaluation {type}/score': score, "epoch": epoch})
     return score
 
 

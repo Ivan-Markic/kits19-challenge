@@ -13,11 +13,17 @@ from dataset import KiTS19
               type=click.Path(exists=True, dir_okay=True, resolve_path=True), required=True)
 @click.option('-o', '--output', help='output npy file path',
               type=click.Path(dir_okay=True, resolve_path=True), required=True)
-def conversion_all(data, output):
+@click.option('-n', '--num_cases', help='Number of cases to convert', type=int, default=-1)
+def conversion_all(data, output, num_cases):
     data = Path(data)
     output = Path(output)
 
     cases = sorted([d for d in data.iterdir() if d.is_dir()])
+
+    # If num_cases is specified and greater than zero, limit the list to that number
+    if num_cases > 0:
+        cases = cases[:num_cases]
+
     pool = mp.Pool()
     pool.map(conversion, zip(cases, [output] * len(cases)))
     pool.close()
