@@ -2,6 +2,9 @@
 
 conda install python=3.6
 
+# Installing torch version for cuda usage
+conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=10.2 -c pytorch
+
 git clone https://github.com/Ivan-Markic/kits19-challenge.git
 pip install -r kits19-challenge/requirements.txt
 
@@ -20,7 +23,6 @@ rm -rf kits19/
 cd kits19-challenge
 
 python conversion_data.py -d "kits19" -o "data"
-
 
 
 # Train first model which will do segmentation of kidney from whole ct image
