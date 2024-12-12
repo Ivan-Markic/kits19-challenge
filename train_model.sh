@@ -1,7 +1,5 @@
 #!/bin/bash
 
-conda install python=3.6
-
 # Installing torch version for cuda usage
 conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=10.2 -c pytorch
 
