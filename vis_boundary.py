@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from pathlib2 import Path
+from utils.vis import imshow
 
 
 def vis_boundary(img, label, pred, num_classes):
@@ -33,11 +34,11 @@ def vis_boundary(img, label, pred, num_classes):
 
 
 if __name__ == '__main__':
-    from utils.vis import imshow
-    
-    root = Path('data')
+
+    root = Path('../data')
     cases = sorted([d for d in root.iterdir() if d.is_dir()])
     for case in cases:
+        print(case)
         img_path = case / 'imaging'
         seg_path = case / 'segmentation'
         num_slice = len(list(img_path.glob('*.npy')))

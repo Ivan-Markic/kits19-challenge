@@ -23,6 +23,7 @@ class GeneralizedDiceLoss(nn.Module):
         if len(pc.shape) == 4:
             intersection = w * einsum('bchw,bchw->bc', pc, tc)
         elif len(pc.shape) == 5:
+            # We want to convert bchwd (batch_size, num_classes, height, width and depth) to bc
             intersection = w * einsum('bchwd,bchwd->bc', pc, tc)
         
         union = w * (einsum('bc...->bc', pc) + einsum('bc...->bc', tc))
