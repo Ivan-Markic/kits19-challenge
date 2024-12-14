@@ -93,7 +93,7 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
     wandb.init(
         # set the wandb project where this run will be logged
         project="dense_unet",
-        name="20_epoch_dense_unet",
+        name=f'{epoch_num}_epoch_dense_unet',
 
         # track hyperparameters and run metadata
         config={
@@ -152,12 +152,12 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
                 valid_dc_score, valid_acc_score, valid_iou_score = evaluation(net, dataset, epoch, batch_size, num_workers, wandb, type='valid')
 
             if valid_dc_score > best_dc_score:
-                dc_best_score = valid_dc_score
+                best_dc_score = valid_dc_score
                 best_epoch = epoch
                 model_path = cp_path / 'best.pth'
                 cp.save(epoch, net.module, optimizer, str(model_path))
                 print('Update best acc!')
-                wandb.log({"valid best dice score": dc_best_score, "epoch": epoch + 1})
+                wandb.log({"valid best dice score": best_dc_score, "epoch": epoch + 1})
 
                 # Log the model artifact
                 if model_path is not None:
