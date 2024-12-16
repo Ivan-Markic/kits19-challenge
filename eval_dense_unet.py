@@ -15,6 +15,7 @@ from network import DenseUNet
 from utils.vis import imshow
 
 
+
 @click.command()
 @click.option('-b', '--batch', 'batch_size', help='Number of batch size', type=int, default=1, show_default=True)
 @click.option('-g', '--num_gpu', help='Number of GPU', type=int, default=1, show_default=True)
@@ -27,14 +28,11 @@ from utils.vis import imshow
               type=click.Path(exists=True, file_okay=True, resolve_path=True), required=True)
 @click.option('-o', '--output', 'output_path', help='output image path',
               type=click.Path(dir_okay=True, resolve_path=True), default='out', show_default=True)
-@click.option('--vis_intvl', help='Number of iteration interval of display visualize image. '
-                                  'No display when set to 0',
-              type=int, default=20, show_default=True)
 @click.option('--num_workers', help='Number of workers on dataloader. '
                                     'Recommend 0 in Windows. '
                                     'Recommend num_gpu in Linux',
               type=int, default=0, show_default=True)
-def main(batch_size, num_gpu, img_size, data_path, resume, output_path, vis_intvl, num_workers):
+def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_workers):
     data_path = Path(data_path)
     output_path = Path(output_path)
     if not output_path.exists():
@@ -44,7 +42,8 @@ def main(batch_size, num_gpu, img_size, data_path, resume, output_path, vis_intv
     transform = MedicalTransform(output_size=img_size, roi_error_range=roi_error_range, use_roi=True)
     
     dataset = KiTS19(data_path, stack_num=3, spec_classes=[0, 1, 2], img_size=img_size,
-                     use_roi=True, roi_file='roi.json', roi_error_range=5, test_transform=transform)
+                     use_roi=True, roi_file='roi.json', roi_error_range=5, train_transform=transform,
+                     valid_transform=transform, test_transform=transform)
     
     net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
     
@@ -69,55 +68,54 @@ def main(batch_size, num_gpu, img_size, data_path, resume, output_path, vis_intv
     net.eval()
     torch.set_grad_enabled(False)
     transform.eval()
-    
+
+    create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, 'train')
+    create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, 'valid')
+    create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, 'test')
+
+
+def create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, type):
     subset = dataset.test_dataset
     case_slice_indices = dataset.test_case_slice_indices
-    
+
     sampler = SequentialSampler(subset)
     data_loader = DataLoader(subset, batch_size=batch_size, sampler=sampler,
                              num_workers=num_workers, pin_memory=True)
-    
+
     case = 0
     vol_output = []
-    
-    with tqdm(total=len(case_slice_indices) - 1, ascii=True, desc=f'eval/test', dynamic_ncols=True) as pbar:
+
+    with tqdm(total=len(case_slice_indices) - 1, ascii=True, desc=f'eval/{type}', dynamic_ncols=True) as pbar:
         for batch_idx, data in enumerate(data_loader):
             imgs, idx = data['image'].cuda(), data['index']
-            
+
             outputs = net(imgs)
             predicts = outputs['output']
             predicts = predicts.argmax(dim=1)
-            
+
             predicts = predicts.cpu().detach().numpy()
             idx = idx.numpy()
-            
+
             vol_output.append(predicts)
-            
+
             while case < len(case_slice_indices) - 1 and idx[-1] >= case_slice_indices[case + 1] - 1:
                 vol_output = np.concatenate(vol_output, axis=0)
                 vol_num_slice = case_slice_indices[case + 1] - case_slice_indices[case]
-                
-                roi = dataset.get_roi(case, type='test')
+
+                roi = dataset.get_roi(case, type=type)
                 vol = vol_output[:vol_num_slice]
                 vol_ = reverse_transform(vol, roi, dataset, transform)
                 vol_ = vol_.astype(np.uint8)
-                
-                case_id = dataset.case_idx_to_case_id(case, type='test')
+
+                case_id = dataset.case_idx_to_case_id(case, type=type)
                 affine = np.load(data_path / f'case_{case_id:05d}' / 'affine.npy')
                 vol_nii = nib.Nifti1Image(vol_, affine)
-                vol_nii_filename = output_path / f'prediction_{case_id:05d}.nii.gz'
+                vol_nii_filename = output_path / f'case_{case_id:05d}' / f'prediction_{case_id:05d}.nii.gz'
                 vol_nii.to_filename(str(vol_nii_filename))
-                
+
                 vol_output = [vol_output[vol_num_slice:]]
                 case += 1
                 pbar.update(1)
-            
-            if vis_intvl > 0 and batch_idx % vis_intvl == 0:
-                data['predict'] = predicts
-                data = dataset.vis_transform(data)
-                imgs, predicts = data['image'], data['predict']
-                imshow(title=f'eval/test', imgs=(imgs[0, 1], predicts[0]), shape=(1, 2),
-                       subtitle=('image', 'predict'))
 
 
 def reverse_transform(vol, roi, dataset, transform):
