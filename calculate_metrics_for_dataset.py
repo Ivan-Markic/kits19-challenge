@@ -2,6 +2,7 @@ import click
 import numpy as np
 import wandb
 import torch
+import shutil
 from pathlib2 import Path
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm
@@ -21,14 +22,11 @@ from utils.metrics import Evaluator
 @click.option('-d', '--data', 'data_path', help='Path of kits19 data after conversion',
               type=click.Path(exists=True, dir_okay=True, resolve_path=True),
               default='data', show_default=True)
-@click.option('-r', '--resume', help='Resume model',
-              type=click.Path(exists=True, file_okay=True, resolve_path=True), required=True)
 @click.option('--num_workers', help='Number of workers on dataloader. '
                                     'Recommend 0 in Windows. '
                                     'Recommend num_gpu in Linux',
               type=int, default=0, show_default=True)
-def main(batch_size, num_gpu, img_size, data_path,
-         resume, num_workers):
+def main(batch_size, num_gpu, img_size, data_path, num_workers):
     data_path = Path(data_path)
 
     transform = MedicalTransform(output_size=img_size, roi_error_range=15, use_roi=True)
@@ -39,17 +37,13 @@ def main(batch_size, num_gpu, img_size, data_path,
 
     net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
 
-    if resume:
-        data = {'net': net}
-        cp_file = Path(resume)
-        cp.load_params(data, cp_file, device='cpu')
-
     gpu_ids = [i for i in range(num_gpu)]
 
-    wandb.init(
+    # Initialize W&B
+    run = wandb.init(
         # set the wandb project where this run will be logged
-        project="best_dense_unet_eval",
-        name=f'20_epoch_dense_unet',
+        project="dense_unet",
+        name=f'best_20_epoch_dense_unet',
 
         # track hyperparameters and run metadata
         config={
@@ -60,6 +54,29 @@ def main(batch_size, num_gpu, img_size, data_path,
             "device:": f"cuda{str(gpu_ids)}"
         }
     )
+
+    # Download the artifact
+    artifact = run.use_artifact('dense_unet_model_epoch_14:v0', type='model')
+    artifact_dir = Path(artifact.download())  # Convert to Path object for easier handling
+
+    # Define the save path
+    resume = Path("runs/DenseUnet/best/best.pth")
+    resume.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Artifact downloaded to: {artifact_dir}")
+
+    # Navigate to the renamed folder and find best.pth
+    best_pth_file = artifact_dir / "best.pth"
+    assert best_pth_file.exists(), f"File 'best.pth' not found inside {best_pth_file}"
+
+    # Move best.pth to the save path
+    shutil.move(best_pth_file, resume)
+    print(f"Moved model file to: {resume}")
+
+    if resume:
+        data = {'net': net}
+        cp_file = Path(resume)
+        cp.load_params(data, cp_file, device='cpu')
 
     torch.cuda.empty_cache()
 
