@@ -3,7 +3,6 @@ import cv2
 import nibabel as nib
 import numpy as np
 import torch
-import torch.nn as nn
 from pathlib2 import Path
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
@@ -12,9 +11,6 @@ import utils.checkpoint as cp
 from dataset import KiTS19
 from dataset.transform import MedicalTransform
 from network import DenseUNet
-from utils.vis import imshow
-
-
 
 @click.command()
 @click.option('-b', '--batch', 'batch_size', help='Number of batch size', type=int, default=1, show_default=True)
@@ -69,15 +65,21 @@ def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_work
     torch.set_grad_enabled(False)
     transform.eval()
 
-    create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, 'train')
-    create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, 'valid')
-    create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, 'test')
+    # Dictionary containing dataset type-specific subsets and slice indices
+    dataset_info = {
+        'train': (dataset.train_dataset, dataset.train_case_slice_indices),
+        'valid': (dataset.valid_dataset, dataset.valid_case_slice_indices),
+        'test': (dataset.test_dataset, dataset.test_case_slice_indices)
+    }
+
+    for dataset_type, (subset, case_slice_indices) in dataset_info.items():
+        # Call the prediction function for each dataset type with specific data
+        create_predict_masks_for_type(net, dataset, case_slice_indices, subset, transform,
+                                      data_path, output_path, batch_size, num_workers, dataset_type)
 
 
-def create_predict_masks_for_type(net, dataset, transform, data_path, output_path, batch_size, num_workers, type):
-    subset = dataset.test_dataset
-    case_slice_indices = dataset.test_case_slice_indices
-
+def create_predict_masks_for_type(net, dataset, case_slice_indices, subset, transform, data_path, output_path,
+                                  batch_size, num_workers, type):
     sampler = SequentialSampler(subset)
     data_loader = DataLoader(subset, batch_size=batch_size, sampler=sampler,
                              num_workers=num_workers, pin_memory=True)
