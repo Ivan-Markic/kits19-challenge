@@ -4,7 +4,7 @@ import wandb
 import torch
 import shutil
 from pathlib2 import Path
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
 
 import utils.checkpoint as cp
@@ -81,6 +81,10 @@ def main(batch_size, num_gpu, img_size, data_path, num_workers):
     torch.cuda.empty_cache()
 
     net = torch.nn.DataParallel(net, device_ids=gpu_ids).cuda()
+
+    net.eval()
+    torch.set_grad_enabled(False)
+    transform.eval()
 
     evaluation(net, dataset, batch_size, num_workers, wandb, 'train')
     evaluation(net, dataset, batch_size, num_workers, wandb, 'valid')
