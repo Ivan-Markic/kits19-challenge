@@ -129,6 +129,10 @@ fabric.properties
 
 runs/
 
+data/
+
+wandb/
+
 .ipynb_checkpoints/
 
 checkpoint/

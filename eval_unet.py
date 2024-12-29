@@ -10,7 +10,7 @@ from tqdm import tqdm
 import utils.checkpoint as cp
 from dataset import KiTS19
 from dataset.transform import MedicalTransform
-from network import DenseUNet
+from network import DenseUNet, SimpleUNet
 
 @click.command()
 @click.option('-b', '--batch', 'batch_size', help='Number of batch size', type=int, default=1, show_default=True)
@@ -28,20 +28,28 @@ from network import DenseUNet
                                     'Recommend 0 in Windows. '
                                     'Recommend num_gpu in Linux',
               type=int, default=0, show_default=True)
-def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_workers):
+@click.option('--type', help='Type of network',
+              type=str, default='dense_unet', show_default=True)
+def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_workers, type):
     data_path = Path(data_path)
     output_path = Path(output_path)
     if not output_path.exists():
         output_path.mkdir(parents=True)
     
-    roi_error_range = 15
-    transform = MedicalTransform(output_size=img_size, roi_error_range=roi_error_range, use_roi=True)
+    # Make ROI usage conditional based on network type
+    use_roi = type == 'dense_unet'
+    roi_error_range = 15 if use_roi else 0
+    transform = MedicalTransform(output_size=img_size, roi_error_range=roi_error_range, use_roi=use_roi)
     
     dataset = KiTS19(data_path, stack_num=3, spec_classes=[0, 1, 2], img_size=img_size,
-                     use_roi=True, roi_file='roi.json', roi_error_range=5, train_transform=transform,
-                     valid_transform=transform, test_transform=transform)
+                     use_roi=use_roi, roi_file='roi.json' if use_roi else None, 
+                     roi_error_range=5 if use_roi else 0,
+                     train_transform=transform, valid_transform=transform, test_transform=transform)
     
-    net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+    if type == 'dense_unet':
+        net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+    elif type == 'simple_unet':
+        net = SimpleUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
     
     if resume:
         data = {'net': net}
@@ -59,7 +67,7 @@ def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_work
     
     torch.cuda.empty_cache()
     
-    net = torch.nn.DataParallel(net, device_ids=gpu_ids).cuda()
+    #net = torch.nn.DataParallel(net, device_ids=gpu_ids).cuda()
     
     net.eval()
     torch.set_grad_enabled(False)
@@ -89,7 +97,7 @@ def create_predict_masks_for_type(net, dataset, case_slice_indices, subset, tran
 
     with tqdm(total=len(case_slice_indices) - 1, ascii=True, desc=f'eval/{type}', dynamic_ncols=True) as pbar:
         for batch_idx, data in enumerate(data_loader):
-            imgs, idx = data['image'].cuda(), data['index']
+            imgs, idx = data['image'], data['index']
 
             outputs = net(imgs)
             predicts = outputs['output']
@@ -104,15 +112,22 @@ def create_predict_masks_for_type(net, dataset, case_slice_indices, subset, tran
                 vol_output = np.concatenate(vol_output, axis=0)
                 vol_num_slice = case_slice_indices[case + 1] - case_slice_indices[case]
 
-                roi = dataset.get_roi(case, type=type)
                 vol = vol_output[:vol_num_slice]
-                vol_ = reverse_transform(vol, roi, dataset, transform)
-                vol_ = vol_.astype(np.uint8)
+                
+                # Apply ROI transform only for dense_unet
+                if transform.use_roi:
+                    roi = dataset.get_roi(case, type=type)
+                    vol = reverse_transform(vol, roi, dataset, transform)
+                else:
+                    # For other network types, just ensure correct shape
+                    vol = vol.astype(np.uint8)
 
                 case_id = dataset.case_idx_to_case_id(case, type=type)
                 affine = np.load(data_path / f'case_{case_id:05d}' / 'affine.npy')
-                vol_nii = nib.Nifti1Image(vol_, affine)
+                vol_nii = nib.Nifti1Image(vol, affine)
                 vol_nii_filename = output_path / f'case_{case_id:05d}' / f'prediction_{case_id:05d}.nii.gz'
+                # Create the directory if it doesn't exist
+                vol_nii_filename.parent.mkdir(parents=True, exist_ok=True)
                 vol_nii.to_filename(str(vol_nii_filename))
 
                 vol_output = [vol_output[vol_num_slice:]]

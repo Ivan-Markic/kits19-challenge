@@ -15,9 +15,9 @@ from dataset import KiTS19
 from dataset.transform import MedicalTransform
 from loss import GeneralizedDiceLoss
 from loss.util import class2one_hot
-from network import DenseUNet
+from network import DenseUNet, SimpleUNet
 from utils.metrics import Evaluator
-from utils.vis import imshow
+import shutil
 
 
 @click.command()
@@ -48,25 +48,37 @@ from utils.vis import imshow
                                     'Recommend 0 in Windows. '
                                     'Recommend num_gpu in Linux',
               type=int, default=0, show_default=True)
+@click.option('--type', help='Type of network',
+              type=str, default='dense_unet', show_default=True)
 def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
-         resume, eval_intvl, cp_intvl, vis_intvl, num_workers):
+         resume, eval_intvl, cp_intvl, vis_intvl, num_workers, type):
     data_path = Path(data_path)
     log_path = Path(log_path)
     cp_path = log_path / 'checkpoint'
 
     if not resume and log_path.exists() and len(list(log_path.glob('*'))) > 0:
         print(f'log path "{str(log_path)}" has old file', file=sys.stderr)
-        sys.exit(-1)
+        # delete that old log file path
+        shutil.rmtree(log_path)
     if not cp_path.exists():
         cp_path.mkdir(parents=True)
 
-    transform = MedicalTransform(output_size=img_size, roi_error_range=15, use_roi=True)
+    # Make ROI usage conditional based on network type
+    use_roi = type == 'dense_unet'
+    roi_error_range = 15 if use_roi else 0
+    transform = MedicalTransform(output_size=img_size, roi_error_range=roi_error_range, use_roi=use_roi)
 
     dataset = KiTS19(data_path, stack_num=3, spec_classes=[0, 1, 2], img_size=img_size,
-                     use_roi=True, roi_file='roi.json', roi_error_range=5,
+                     use_roi=use_roi, roi_file='roi.json' if use_roi else None, 
+                     roi_error_range=5 if use_roi else 0,
                      train_transform=transform, valid_transform=transform)
 
-    net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+    if type == 'dense_unet':
+        net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+    elif type == 'simple_unet':
+        net = SimpleUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+    else:
+        raise ValueError(f"Invalid network type: {type}")
 
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
 
@@ -92,8 +104,8 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="dense_unet",
-        name=f'{epoch_num}_epoch_dense_unet',
+        project=type,
+        name=f'{epoch_num}_epoch_{type}',
 
         # track hyperparameters and run metadata
         config={
@@ -149,7 +161,7 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
 
                 # No need to return metrics when they are logged to db
                 evaluation(net, dataset, epoch, batch_size, num_workers, wandb, type='train')
-                valid_dc_score, valid_acc_score, valid_iou_score = evaluation(net, dataset, epoch, batch_size, num_workers, wandb, type='valid')
+                valid_dc_score, _, _ = evaluation(net, dataset, epoch, batch_size, num_workers, wandb, type='valid')
 
             if valid_dc_score > best_dc_score:
                 best_dc_score = valid_dc_score
@@ -161,7 +173,7 @@ def main(epoch_num, batch_size, lr, num_gpu, img_size, data_path, log_path,
 
                 # Log the model artifact
                 if model_path is not None:
-                    model_artifact = wandb.Artifact(f'dense_unet_model_epoch_{epoch}', type='model')
+                    model_artifact = wandb.Artifact(f'{type}_model_epoch_{epoch}', type='model')
                     model_artifact.add_file(model_path)
                     wandb.log_artifact(model_artifact)
 
@@ -239,7 +251,7 @@ def evaluation(net, dataset, epoch, batch_size, num_workers, wandb, type):
     vol_output = []
 
     with tqdm(total=len(case_slice_indices) - 1, ascii=True, desc=f'eval/{type:5}', dynamic_ncols=True) as pbar:
-        for batch_idx, data in enumerate(data_loader):
+        for _, data in enumerate(data_loader):
             imgs, labels, idx = data['image'].cuda(), data['label'], data['index']
 
             outputs = net(imgs)
@@ -291,6 +303,7 @@ def evaluation(net, dataset, epoch, batch_size, num_workers, wandb, type):
     })
 
     # Print scores for visibility in the console
+    # Average of per case 1 and per case 2
     dc_score = (metrics['dc_per_case_1'] + metrics['dc_per_case_2']) / 2
     acc_score = (metrics['acc_per_case_1'] + metrics['acc_per_case_2']) / 2
     iou_score = (metrics['iou_per_case_1'] + metrics['iou_per_case_2']) / 2
