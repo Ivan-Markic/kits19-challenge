@@ -10,7 +10,7 @@ from tqdm import tqdm
 import utils.checkpoint as cp
 from dataset import KiTS19
 from dataset.transform import MedicalTransform
-from network import DenseUNet
+from network import DenseUNet, SimpleUNet
 from utils.metrics import Evaluator
 
 
@@ -26,26 +26,38 @@ from utils.metrics import Evaluator
                                     'Recommend 0 in Windows. '
                                     'Recommend num_gpu in Linux',
               type=int, default=0, show_default=True)
-def main(batch_size, num_gpu, img_size, data_path, num_workers):
+@click.option('--type', help='Type of network',
+              type=str, default='simple_unet', show_default=True)
+def main(batch_size, num_gpu, img_size, data_path, num_workers, type):
     data_path = Path(data_path)
 
-    transform = MedicalTransform(output_size=img_size, roi_error_range=15, use_roi=True)
+    # Make ROI usage conditional based on network type
+    use_roi = type == 'dense_unet'
+    roi_error_range = 15 if use_roi else 0
+    transform = MedicalTransform(output_size=img_size, roi_error_range=roi_error_range, use_roi=use_roi)
 
     dataset = KiTS19(data_path, stack_num=3, spec_classes=[0, 1, 2], img_size=img_size,
-                     use_roi=True, roi_file='roi.json', roi_error_range=5,
+                     use_roi=use_roi, roi_file='roi.json' if use_roi else None, 
+                     roi_error_range=5 if use_roi else 0,
                      train_transform=transform, valid_transform=transform, test_transform=transform)
 
-    net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+    # Initialize network based on type
+    if type == 'dense_unet':
+        net = DenseUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+        model_artifact = 'dense_unet_model_epoch_14:v0'
+    elif type == 'simple_unet':
+        net = SimpleUNet(in_ch=dataset.img_channels, out_ch=dataset.num_classes)
+        model_artifact = 'simple_unet_model_epoch_15:v0'
+
+    else:
+        raise ValueError(f"Unknown network type: {type}")
 
     gpu_ids = [i for i in range(num_gpu)]
 
     # Initialize W&B
     run = wandb.init(
-        # set the wandb project where this run will be logged
-        project="dense_unet",
-        name=f'best_20_epoch_dense_unet',
-
-        # track hyperparameters and run metadata
+        project=type,
+        name=f'metrics_calculation_{type}',
         config={
             "batch_size": batch_size,
             "architecture": net.__class__.__name__,
@@ -56,11 +68,11 @@ def main(batch_size, num_gpu, img_size, data_path, num_workers):
     )
 
     # Download the artifact
-    artifact = run.use_artifact('dense_unet_model_epoch_14:v0', type='model')
-    artifact_dir = Path(artifact.download())  # Convert to Path object for easier handling
+    artifact = run.use_artifact(model_artifact, type='model')
+    artifact_dir = Path(artifact.download())
 
     # Define the save path
-    resume = Path("runs/DenseUnet/best/best.pth")
+    resume = Path(f"runs/{net.__class__.__name__}/best/best.pth")
     resume.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Artifact downloaded to: {artifact_dir}")

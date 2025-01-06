@@ -67,7 +67,7 @@ def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_work
     
     torch.cuda.empty_cache()
     
-    #net = torch.nn.DataParallel(net, device_ids=gpu_ids).cuda()
+    net = torch.nn.DataParallel(net, device_ids=gpu_ids).cuda()
     
     net.eval()
     torch.set_grad_enabled(False)
