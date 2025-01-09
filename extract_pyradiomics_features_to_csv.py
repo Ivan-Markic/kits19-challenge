@@ -10,7 +10,7 @@ data_folder = "kits19"
 extractor = featureextractor.RadiomicsFeatureExtractor()
 
 # Define output CSV file
-output_csv = "radiomics_features_from_predicted_masks.csv"
+output_csv = "simple_unet_radiomics_features_from_predicted_masks.csv"
 
 # Prepare the CSV file with headers
 with open(output_csv, mode="w", newline="") as csv_file:

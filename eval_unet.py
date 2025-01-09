@@ -13,23 +13,23 @@ from dataset.transform import MedicalTransform
 from network import DenseUNet, SimpleUNet
 
 @click.command()
-@click.option('-b', '--batch', 'batch_size', help='Number of batch size', type=int, default=1, show_default=True)
-@click.option('-g', '--num_gpu', help='Number of GPU', type=int, default=1, show_default=True)
+@click.option('-b', '--batch', 'batch_size', help='Number of batch size', type=int, default=12, show_default=True)
+@click.option('-g', '--num_gpu', help='Number of GPU', type=int, default=2, show_default=True)
 @click.option('-s', '--size', 'img_size', help='Output image size', type=(int, int),
               default=(512, 512), show_default=True)
 @click.option('-d', '--data', 'data_path', help='Path of kits19 data after conversion',
               type=click.Path(exists=True, dir_okay=True, resolve_path=True),
               default='data', show_default=True)
 @click.option('-r', '--resume', help='Resume model',
-              type=click.Path(exists=True, file_okay=True, resolve_path=True), required=True)
+              type=click.Path(exists=True, file_okay=True, resolve_path=True), default='runs/SimpleUNet/best/best.pth', show_default=True)
 @click.option('-o', '--output', 'output_path', help='output image path',
-              type=click.Path(dir_okay=True, resolve_path=True), default='out', show_default=True)
+              type=click.Path(dir_okay=True, resolve_path=True), default='kits19', show_default=True)
 @click.option('--num_workers', help='Number of workers on dataloader. '
                                     'Recommend 0 in Windows. '
                                     'Recommend num_gpu in Linux',
-              type=int, default=0, show_default=True)
+              type=int, default=2, show_default=True)
 @click.option('--type', help='Type of network',
-              type=str, default='dense_unet', show_default=True)
+              type=str, default='simple_unet', show_default=True)
 def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_workers, type):
     data_path = Path(data_path)
     output_path = Path(output_path)
@@ -37,13 +37,13 @@ def main(batch_size, num_gpu, img_size, data_path, resume, output_path, num_work
         output_path.mkdir(parents=True)
     
     # Make ROI usage conditional based on network type
-    use_roi = type == 'dense_unet'
-    roi_error_range = 15 if use_roi else 0
+    use_roi = False
+    roi_error_range = 0
     transform = MedicalTransform(output_size=img_size, roi_error_range=roi_error_range, use_roi=use_roi)
     
     dataset = KiTS19(data_path, stack_num=3, spec_classes=[0, 1, 2], img_size=img_size,
-                     use_roi=use_roi, roi_file='roi.json' if use_roi else None, 
-                     roi_error_range=5 if use_roi else 0,
+                     use_roi=use_roi, roi_file=None, 
+                     roi_error_range=roi_error_range,
                      train_transform=transform, valid_transform=transform, test_transform=transform)
     
     if type == 'dense_unet':
@@ -97,7 +97,7 @@ def create_predict_masks_for_type(net, dataset, case_slice_indices, subset, tran
 
     with tqdm(total=len(case_slice_indices) - 1, ascii=True, desc=f'eval/{type}', dynamic_ncols=True) as pbar:
         for batch_idx, data in enumerate(data_loader):
-            imgs, idx = data['image'], data['index']
+            imgs, idx = data['image'].cuda(), data['index']
 
             outputs = net(imgs)
             predicts = outputs['output']
@@ -117,7 +117,8 @@ def create_predict_masks_for_type(net, dataset, case_slice_indices, subset, tran
                 # Apply ROI transform only for dense_unet
                 if transform.use_roi:
                     roi = dataset.get_roi(case, type=type)
-                    vol = reverse_transform(vol, roi, dataset, transform)
+                    print(f"ROI information for case {case}: {roi}")
+                    # vol = reverse_transform(vol, roi, dataset, transform)
                 else:
                     # For other network types, just ensure correct shape
                     vol = vol.astype(np.uint8)

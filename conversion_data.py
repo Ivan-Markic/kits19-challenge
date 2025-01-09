@@ -10,9 +10,9 @@ from dataset import KiTS19
 
 @click.command()
 @click.option('-d', '--data', help='kits19 data path',
-              type=click.Path(exists=True, dir_okay=True, resolve_path=True), required=True)
+              type=click.Path(exists=True, dir_okay=True, resolve_path=True), default='kits19')
 @click.option('-o', '--output', help='output npy file path',
-              type=click.Path(dir_okay=True, resolve_path=True), required=True)
+              type=click.Path(dir_okay=True, resolve_path=True), default='data')
 @click.option('-n', '--num_cases', help='Number of cases to convert', type=int, default=-1)
 def conversion_all(data, output, num_cases):
     data = Path(data)
